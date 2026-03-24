@@ -24,6 +24,15 @@ Usage:
  
 Requires : rustscan, nmap
 Optional : autorecon, kerbrute, enum4linux-ng, ldapdomaindump, scrot
+
+# Full scan workflow
+sudo python3 oscp_recon.py 192.168.49.101 --screenshot
+
+# Log a cred you found manually
+sudo python3 oscp_recon.py 192.168.49.101 --add-cred administrator 'P@ssw0rd' SMB ""
+
+# Build the exam report when done
+sudo python3 oscp_recon.py --report
 """
  
 import argparse
