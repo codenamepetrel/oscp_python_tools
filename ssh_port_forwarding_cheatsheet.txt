@@ -1,0 +1,174 @@
+SSH Local Port Forwarding
+
+OSCP Cheat Sheet | Pete Lenhart
+
+What Is Local Port Forwarding?
+
+Local port forwarding lets you access a service on a remote machine that
+is only listening on localhost (127.0.0.1). You create an SSH tunnel
+that forwards a local port on your attack box through the SSH connection
+to a port on the target.
+
+The House Analogy
+
+-   The target machine is a house with a locked front door
+
+-   PostgreSQL (or any internal service) is a secret room — only
+    accessible from inside the house
+
+-   SSH is your key to the living room (you have valid credentials)
+
+-   Local port forwarding digs a tunnel from YOUR bedroom (attack box)
+    into the living room
+
+-   From the living room you knock on the secret room door — it lets you
+    in because you look local
+
+The Core Command
+
+  ssh -L [local_port]:localhost:[remote_port] [user]@[target_ip]
+
+Breaking down each part:
+
+  ---------------- ---------------------------- -------------------------
+  Part             Example                      Meaning
+
+  -L               -L                           Local port forwarding
+                                                flag
+
+  local_port       1337                         Port on YOUR attack box
+                                                (choose any unused port)
+
+  localhost        localhost                    Target talks to itself —
+                                                its own loopback address
+
+  remote_port      5432                         Port of the service on
+                                                the target (e.g.
+                                                PostgreSQL)
+
+  user@target      christine@10.x.x.x           SSH credentials for the
+                                                target machine
+  ---------------- ---------------------------- -------------------------
+
+Real World Example — PostgreSQL on HTB
+
+Scenario: PostgreSQL is running on the target but only listening on
+127.0.0.1:5432. You cannot reach it directly from your attack box.
+
+Step 1 — Confirm the service is internal (on target)
+
+  netstat -tunlp
+
+Look for: tcp 0.0.0.0 127.0.0.1:5432 LISTEN — this confirms it is
+localhost-only.
+
+Step 2 — Set up the tunnel (on attack box, Terminal 2)
+
+  ssh -L 1337:localhost:5432 christine@10.129.228.195
+
+Keep this terminal open. The tunnel dies if you close it.
+
+Step 3 — Connect through the tunnel (on attack box, Terminal 3)
+
+  psql -h localhost -p 1337 -U christine
+
+Even though you typed localhost, your traffic travels through the SSH
+tunnel to the target's PostgreSQL. The database thinks you are a local
+connection.
+
+Step 4 — Enumerate PostgreSQL
+
+  ---------------- ---------------------------- -------------------------
+  Command          Syntax                       What it does
+
+  \l               \l                           List all databases
+
+  \c               \c secrets                   Connect to a database
+
+  \dt              \dt                          List all tables in
+                                                current database
+
+  \du              \du                          List users and roles
+
+  SELECT           SELECT * FROM flag;          Dump all rows from a
+                                                table
+
+  \q               \q                           Quit psql
+  ---------------- ---------------------------- -------------------------
+
+Traffic Flow Diagram
+
+  Your Attack Box (localhost:1337) --> SSH Tunnel --> Target
+  (localhost:5432 / PostgreSQL)
+
+The Three Terminal Pattern
+
+  ---------- ------------------------------ -----------------------------
+  Terminal   Command                        Purpose
+
+  Terminal 1 ssh christine@10.x.x.x         Initial SSH session for recon
+                                            on target
+
+  Terminal 2 ssh -L 1337:localhost:5432 ... Tunnel — keep this open!
+
+  Terminal 3 psql -h localhost -p 1337 -U   Connect through the tunnel
+             user                           
+  ---------- ------------------------------ -----------------------------
+
+Local vs Remote Port Forwarding
+
+  ------------- ------------------------------- ---------------------------
+  Type          Flag & Syntax                   Use Case
+
+  Local (-L)    ssh -L                          YOU want to reach a service
+                local:remote_host:remote_port   on the remote network
+
+  Remote (-R)   ssh -R                          Remote box needs to reach a
+                remote:local_host:local_port    service on YOUR machine
+                                                (reverse shells)
+  ------------- ------------------------------- ---------------------------
+
+Common Services to Tunnel
+
+  --------------------- --------------- ----------------------------------
+  Service               Default Port    Tunnel Command Example
+
+  PostgreSQL            5432            ssh -L 1337:localhost:5432
+                                        user@target
+
+  MySQL                 3306            ssh -L 1337:localhost:3306
+                                        user@target
+
+  MSSQL                 1433            ssh -L 1337:localhost:1433
+                                        user@target
+
+  Redis                 6379            ssh -L 1337:localhost:6379
+                                        user@target
+
+  HTTP (internal)       80/8080         ssh -L 1337:localhost:8080
+                                        user@target
+
+  RDP                   3389            ssh -L 1337:localhost:3389
+                                        user@target
+  --------------------- --------------- ----------------------------------
+
+Pro Tips
+
+-   Add -N flag to set up tunnel without opening a shell: ssh -N -L
+    1337:localhost:5432 user@target
+
+-   Add -f flag to send SSH to background: ssh -f -N -L
+    1337:localhost:5432 user@target
+
+-   Choose any unused local port — 1337, 4444, 8888 all work fine
+
+-   Run netstat -tunlp on the target first to confirm the service is
+    localhost-only
+
+-   If the tunnel drops, just re-run the ssh -L command to re-establish
+    it
+
+-   You can tunnel to other hosts on the remote network too, not just
+    localhost
+
+Pete Lenhart | OSCP Prep | SSH Local Port Forwarding Cheat Sheet

