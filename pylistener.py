@@ -1,3 +1,10 @@
+##############################################
+## Freeworld - Allergic to aluminum baby   ##
+## How to use:                             ##
+##   Add file to PATH                      ##
+##   pylistener <PORT>                     ##
+##############################################
+
 #!/usr/bin/env python3
 import socket
 import threading
