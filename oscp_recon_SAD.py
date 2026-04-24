@@ -308,19 +308,46 @@ def parse_ports(text):
 # ─────────────────────────────────────────────────────────────────
 #  STAGE 1 — RUSTSCAN
 # ─────────────────────────────────────────────────────────────────
+def install_rustscan():
+    """Download and install RustScan 2.4.1 (x86_64 Linux) from bee-san/RustScan."""
+    import tempfile
+    head("Installing RustScan 2.4.1...")
+    url = "https://github.com/bee-san/RustScan/releases/download/2.4.1/x86_64-linux-rustscan.tar.gz.zip"
+    with tempfile.TemporaryDirectory() as tmp:
+        cmds = [
+            f"wget -q {url} -O {tmp}/rustscan.zip",
+            f"unzip -q {tmp}/rustscan.zip -d {tmp}",
+            f"tar -xzf {tmp}/x86_64-linux-rustscan.tar.gz -C {tmp}",
+            f"chmod +x {tmp}/rustscan",
+            f"mv {tmp}/rustscan /usr/local/bin/rustscan",
+        ]
+        for cmd in cmds:
+            result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
+            if result.returncode != 0:
+                err(f"Install step failed: {cmd}")
+                err(result.stderr.strip())
+                return False
+    info("RustScan installed successfully.")
+    return True
+
+
 def run_rustscan(ip):
     head("[STAGE 1] RustScan — Fast TCP Discovery")
     if not tool_exists("rustscan"):
-        warn("rustscan not found — falling back to nmap -p- (slower)")
-        out   = run(f"nmap -T4 --open -p- {ip}")
-        ports = parse_ports(out)
-    else:
-        out   = run(f"rustscan -a {ip} --ulimit 5000 -- -Pn 2>/dev/null")
-        ports = parse_ports(out)
-        if not ports:
-            warn("RustScan returned nothing — falling back to nmap -p-")
+        warn("rustscan not found — attempting auto-install...")
+        if not install_rustscan() or not tool_exists("rustscan"):
+            warn("Install failed — falling back to nmap -p- (slower)")
             out   = run(f"nmap -T4 --open -p- {ip}")
             ports = parse_ports(out)
+            info(f"TCP open ports: {ports}") if ports else err("No TCP ports discovered.")
+            return ports
+
+    out   = run(f"rustscan -a {ip} --ulimit 5000 -- -Pn 2>/dev/null")
+    ports = parse_ports(out)
+    if not ports:
+        warn("RustScan returned nothing — falling back to nmap -p-")
+        out   = run(f"nmap -T4 --open -p- {ip}")
+        ports = parse_ports(out)
     info(f"TCP open ports: {ports}") if ports else err("No TCP ports discovered.")
     return ports
  
