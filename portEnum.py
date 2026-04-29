@@ -2,8 +2,8 @@
 
 ##############################################
 ## Freeworld - Allergic to aluminum baby   ##
-## Port Enumeration                  ##
-## Usage: python3 portEnum.py <IP> <PORT>  ##
+## Port Enumeration                         ##
+## Usage: python3 portEnum.py <IP> <PORT>   ##
 ##############################################
 
 import subprocess
@@ -21,6 +21,7 @@ PORT = sys.argv[2]
 OUTPUT_DIR = f"/root/oscp/scans/{TARGET}"
 REPORT = f"{OUTPUT_DIR}/port{PORT}_report.txt"
 WORDLIST = "/usr/share/wordlists/dirbuster/directory-list-2.3-medium.txt"
+VHOST_WORDLIST = "/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt"
 
 def ping_check(target):
     print(f"[*] Pinging {target}...")
@@ -50,6 +51,23 @@ def rustscan_check(target, port):
     else:
         print(f"[-] Port {port} does not appear open on {target}. Aborting.")
         return False
+
+def get_vhost_baseline(target, port):
+    print(f"[*] Getting baseline response size for vhost filtering...")
+    result = subprocess.run(
+        ["curl", "-s", "-o", "/dev/null", "-w", "%{size_download}",
+         "-H", f"Host: nonexistent_baseline_fuzz.{target}",
+         f"http://{target}:{port}"],
+        capture_output=True,
+        text=True
+    )
+    size = result.stdout.strip()
+    if size.isdigit():
+        print(f"[+] Baseline response size: {size} bytes")
+        return size
+    else:
+        print(f"[!] Could not determine baseline size, defaulting to -fc 404,400 filtering")
+        return None
 
 def open_terminal(command):
     terminals = [
@@ -154,7 +172,7 @@ def main():
     open_terminal(nikto_cmd)
     time.sleep(2)
 
-    # WhatWeb
+    # WhatWeb (second run)
     whatweb_out = f"{OUTPUT_DIR}/whatweb_{PORT}.txt"
     whatweb_cmd = (
         f"whatweb -a 3 http://{TARGET}:{PORT} "
@@ -162,6 +180,41 @@ def main():
     )
     print("[*] Opening WhatWeb terminal...")
     open_terminal(whatweb_cmd)
+    time.sleep(2)
+
+    # ffuf - Virtual Host / Subdomain Fuzzing
+    ffuf_vhost_out = f"{OUTPUT_DIR}/ffuf_vhost_{PORT}.txt"
+    baseline_size = get_vhost_baseline(TARGET, PORT)
+    if baseline_size:
+        size_filter = f"-fs {baseline_size}"
+    else:
+        size_filter = "-fc 404,400"
+
+    ffuf_vhost_cmd = (
+        f"ffuf -u http://{TARGET}:{PORT} "
+        f"-H \"Host: FUZZ.{TARGET}\" "
+        f"-w {VHOST_WORDLIST} "
+        f"{size_filter} "
+        f"-o {ffuf_vhost_out} "
+        f"-of csv"
+    )
+    print("[*] Opening ffuf VHost fuzzing terminal...")
+    open_terminal(ffuf_vhost_cmd)
+    time.sleep(2)
+
+    # ffuf - File Extension Fuzzing
+    ffuf_ext_out = f"{OUTPUT_DIR}/ffuf_ext_{PORT}.txt"
+    ffuf_ext_cmd = (
+        f"ffuf -u http://{TARGET}:{PORT}/FUZZ "
+        f"-w {WORDLIST} "
+        f"-e .php,.html,.txt,.bak,.conf,.log,.xml,.json "
+        f"-fc 404 "
+        f"-o {ffuf_ext_out} "
+        f"-of csv"
+    )
+    print("[*] Opening ffuf File Extension fuzzing terminal...")
+    open_terminal(ffuf_ext_cmd)
+    time.sleep(2)
 
     # Wait for scans to finish
     print("\n[*] All scans running in separate terminals...")
@@ -175,6 +228,8 @@ def main():
     append_report("GOBUSTER Directory Scan", gobuster_out)
     append_report("FEROXBUSTER Recursive Scan", ferox_out)
     append_report("NIKTO Web Scan", nikto_out)
+    append_report("FFUF VHost Fuzzing", ffuf_vhost_out)
+    append_report("FFUF File Extension Fuzzing", ffuf_ext_out)
 
     print(f"\n[+] Report saved to: {REPORT}")
     print(f"[+] View with: cat {REPORT}")
