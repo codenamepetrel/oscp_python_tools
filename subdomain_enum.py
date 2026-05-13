@@ -5,6 +5,79 @@ Description: Brute-forces subdomains using a wordlist via async HTTP/HTTPS reque
              Concurrency-limited to avoid flooding the OS or triggering rate limits.
 
              pip install aiohttp
+             subdomain_enum.py
+Async subdomain enumerator built in Python. Uses `aiohttp` to blast through a wordlist concurrently while staying within sane connection limits.
+---
+Features
+Async/semaphore-gated — no OS connection floods
+Tries HTTPS first, falls back to HTTP automatically
+Follows redirects (catches 301/302 responses)
+Skips SSL verification (catches self-signed internal hosts)
+Optional output file (`-o`)
+CLI flags for concurrency, protocol control, wordlist, domain
+---
+Requirements
+```bash
+pip install aiohttp
+```
+---
+Usage
+Basic
+```bash
+python3 subdomain_enum.py -d target.com -w wordlist.txt
+```
+With output file
+```bash
+python3 subdomain_enum.py -d target.com -w wordlist.txt -o results.txt
+```
+Custom concurrency (default: 100)
+```bash
+python3 subdomain_enum.py -d target.com -w wordlist.txt -c 200
+```
+HTTPS only
+```bash
+python3 subdomain_enum.py -d target.com -w wordlist.txt --https-only
+```
+HTTP only
+```bash
+python3 subdomain_enum.py -d target.com -w wordlist.txt --http-only
+```
+---
+Recommended Wordlists (SecLists)
+```bash
+# Small/fast (good starting point)
+/usr/share/seclists/Discovery/DNS/subdomains-top1million-5000.txt
+
+# Medium
+/usr/share/seclists/Discovery/DNS/subdomains-top1million-20000.txt
+
+# Full send
+/usr/share/seclists/Discovery/DNS/subdomains-top1million-110000.txt
+```
+Install SecLists on Kali:
+```bash
+sudo apt install seclists
+```
+---
+Example Output
+```
+[*] Target   : target.com
+[*] Wordlist : subdomains-top1million-5000.txt (5000 words)
+[*] Threads  : 100 concurrent
+[*] Protocols: https, http
+[*] Started  : 2026-05-13 10:22:01
+--------------------------------------------------
+[FOUND] https://www.target.com — Status: 200
+[FOUND] https://mail.target.com — Status: 200
+[FOUND] http://dev.target.com — Status: 302
+--------------------------------------------------
+[*] Done. 5000 words checked.
+```
+---
+Notes
+This tool is for authorized testing only (CTFs, HackTheBox, OSCP labs, bug bounty with scope).
+Crank `-c` down if you're hitting rate limits or seeing false negatives.
+For passive/DNS-only enumeration, consider pairing with `amass` or `subfinder`.
 """
 
 import asyncio
